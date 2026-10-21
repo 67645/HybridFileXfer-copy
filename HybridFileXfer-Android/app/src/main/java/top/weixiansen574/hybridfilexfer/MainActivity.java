@@ -22,6 +22,7 @@ import android.view.MenuItem;
 import android.view.View;
 import android.widget.AdapterView;
 import android.widget.Button;
+import android.widget.CheckBox;
 import android.widget.EditText;
 import android.widget.Spinner;
 import android.widget.Toast;
@@ -56,6 +57,7 @@ public class MainActivity extends AppCompatActivity implements View.OnClickListe
     private Spinner spinnerMode;
     Button startServerBtn;
     Button toTransfer;
+    CheckBox cbPcDriveAllowed;
     Context context;
     private boolean isShizuku = false;
     private HFXServer server;
@@ -71,6 +73,9 @@ public class MainActivity extends AppCompatActivity implements View.OnClickListe
         startServerBtn.setOnClickListener(this);
         toTransfer = findViewById(R.id.to_transfer);
         toTransfer.setOnClickListener(this);
+        cbPcDriveAllowed = findViewById(R.id.cb_pc_drive_allowed);
+        cbPcDriveAllowed.setChecked(config.getPcDriveAllowed());
+        cbPcDriveAllowed.setOnCheckedChangeListener((buttonView, isChecked) -> config.setPcDriveAllowed(isChecked));
         spinnerMode = findViewById(R.id.spinner_mode);
         findViewById(R.id.refresh).setOnClickListener(this);
 
@@ -158,6 +163,7 @@ public class MainActivity extends AppCompatActivity implements View.OnClickListe
 
     private void bindAndStartService() {
         netCardsAdapter.setEnableModify(false);
+        cbPcDriveAllowed.setEnabled(false);
         startServerBtn.setEnabled(false);
         startServerBtn.setText(R.string.ting_zhi_fu_wu);
         if (isShizuku) {
@@ -224,11 +230,34 @@ public class MainActivity extends AppCompatActivity implements View.OnClickListe
 
             @Override
             public void onConnectSuccess() {
-                toTransfer.setEnabled(true);
+                //PC 控制模式下不允许手机端再进入文件管理，避免双端同时驱动
+                toTransfer.setEnabled(!server.isPcDriveMode());
                 //设置静态实例，使得传输Activity能使用
                 HFXServer.instance = server;
                 //TODO 国际化
                 startServerBtn.setText(R.string.duan_kai_lian_jie);
+            }
+
+            @Override
+            public void onPcDriveModeStarted() {
+                toTransfer.setEnabled(false);
+                Toast.makeText(context, R.string.pc_drive_mode_started, Toast.LENGTH_SHORT).show();
+            }
+
+            @Override
+            public void onPcDriveModeStopped(String reason) {
+                toTransfer.setEnabled(false);
+                if (reason != null) {
+                    Toast.makeText(context, getString(R.string.pc_drive_mode_stopped, reason), Toast.LENGTH_LONG).show();
+                    //客户端异常断开或主动关闭，恢复主界面状态
+                    HFXServer.instance = null;
+                    changeToStartState();
+                }
+            }
+
+            @Override
+            public void onPcDriveModeRejected() {
+                Toast.makeText(context, R.string.pc_drive_mode_rejected, Toast.LENGTH_SHORT).show();
             }
 
             @Override
@@ -238,7 +267,7 @@ public class MainActivity extends AppCompatActivity implements View.OnClickListe
             }
         };
         new StartServerTask(callback,server,config.getServerPort(), netCardsAdapter.getSelectedInterfaces(),
-                config.getLocalBufferCount(), config.getRemoteBufferCount()).execute();
+                config.getLocalBufferCount(), config.getRemoteBufferCount(), config.getPcDriveAllowed()).execute();
     }
 
     @Override
@@ -476,6 +505,7 @@ public class MainActivity extends AppCompatActivity implements View.OnClickListe
 
     private void changeToStartState() {
         netCardsAdapter.setEnableModify(true);
+        cbPcDriveAllowed.setEnabled(true);
         startServerBtn.setEnabled(true);
         startServerBtn.setText(R.string.qi_dong_fu_wu_qi_bing_deng_dai_lian_jie);
         server = null;
@@ -495,6 +525,7 @@ public class MainActivity extends AppCompatActivity implements View.OnClickListe
                     }
                     unbindService();
                     netCardsAdapter.setEnableModify(true);
+                    cbPcDriveAllowed.setEnabled(true);
                     toTransfer.setEnabled(false);
                     startServerBtn.setText(R.string.qi_dong_fu_wu_qi_bing_deng_dai_lian_jie);
                     startServerBtn.setEnabled(true);

@@ -189,7 +189,7 @@ public abstract class WriteFileCall implements Callable<Void> {
 
     private void setLastModified(String file, long time) throws Exception {
         if (!setFileLastModified(file,time)) {
-            System.out.println("Warning! file cannot set last modified:" + file);
+            System.err.println("Warning! file cannot set last modified:" + file);
         }
     }
 

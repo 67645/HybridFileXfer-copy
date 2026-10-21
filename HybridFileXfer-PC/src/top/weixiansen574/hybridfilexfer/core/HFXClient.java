@@ -9,11 +9,13 @@ import java.nio.channels.SocketChannel;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.locks.ReentrantLock;
 
 import top.weixiansen574.hybridfilexfer.core.bean.Directory;
 import top.weixiansen574.hybridfilexfer.core.bean.RemoteFile;
 import top.weixiansen574.hybridfilexfer.core.callback.ClientCallBack;
 import top.weixiansen574.hybridfilexfer.core.callback.ConnectServerCallback;
+import top.weixiansen574.hybridfilexfer.core.callback.TransferFileCallback;
 import top.weixiansen574.nio.DataByteChannel;
 
 public abstract class HFXClient extends HFXService {
@@ -21,13 +23,22 @@ public abstract class HFXClient extends HFXService {
     protected final String serverControllerAddress;
     protected final int serverPort;
     protected final String homeDir;
+    protected final int driveMode;
     protected boolean isRun = true;
     protected ClientCallBack callBack;
+    protected int serverFileSystem = Directory.FILE_SYSTEM_UNIX;
+    protected String serverHomeDir = "/";
+    private final ReentrantLock controlLock = new ReentrantLock(true);
 
     public HFXClient(String serverControllerAddress, int serverPort,String homeDir) {
+        this(serverControllerAddress, serverPort, homeDir, DRIVE_MODE_PHONE);
+    }
+
+    public HFXClient(String serverControllerAddress, int serverPort, String homeDir, int driveMode) {
         this.serverControllerAddress = serverControllerAddress;
         this.serverPort = serverPort;
         this.homeDir = homeDir;
+        this.driveMode = driveMode;
     }
 
     public boolean connect(ConnectServerCallback callback) throws IOException {
@@ -39,9 +50,16 @@ public abstract class HFXClient extends HFXService {
 
             ctChannel.write(CLIENT_HEADER.getBytes(StandardCharsets.UTF_8));
             ctChannel.writeInt(VERSION_CODE);
+            ctChannel.writeByte(driveMode);
             if (!ctChannel.readBoolean()) {
                 //System.out.println("版本不一致，你的版本：" + VERSION_CODE + "，对方版本：" + ctChannel.readInt());
                 callback.onVersionMismatch(VERSION_CODE, ctChannel.readInt());
+                ctChannel.close();
+                return false;
+            }
+            if (!ctChannel.readBoolean()) {
+                //服务端未允许 PC 控制模式
+                callback.onDriveModeRejected();
                 ctChannel.close();
                 return false;
             }
@@ -136,6 +154,9 @@ public abstract class HFXClient extends HFXService {
         ctChannel.writeInt(Directory.getCurrentFileSystem());
         //返回主路径信息给对方
         ctChannel.writeUTF(homeDir);
+        //v3.1：读取服务端的文件系统与主目录
+        serverFileSystem = ctChannel.readInt();
+        serverHomeDir = ctChannel.readUTF();
         //System.out.println("传输通道已全部连接完成");
         List<String> channelNames = new ArrayList<>(connections.size());
         for (TransferConnection connection : connections) {
@@ -150,6 +171,9 @@ public abstract class HFXClient extends HFXService {
     public abstract long getAvailableMemoryMB();
 
     public void start(ClientCallBack transferFileCallback) throws Exception {
+        if (driveMode == DRIVE_MODE_PC) {
+            throw new IllegalStateException("PC drive mode does not use the passive loop");
+        }
         this.callBack = transferFileCallback;
         //LOOP
         while (isRun) {
@@ -213,11 +237,39 @@ public abstract class HFXClient extends HFXService {
     protected abstract boolean mkdir(String parent, String child) throws Exception;
 
     private void handleShutdown() {
-        isRun = false;
+        disconnect();
+        callBack.onExit();
+        //System.out.println("收到停止指令，客户端已正常关闭！");
+    }
+
+    /**
+     * PC 驱动模式：通知服务端关闭本次会话，然后断开本地连接。
+     */
+    public void shutdownServer() {
+        controlLock.lock();
         try {
-            ctChannel.close();
+            if (ctChannel != null && ctChannel.isOpen()) {
+                ctChannel.writeShort(ControllerIdentifiers.SHUTDOWN);
+            }
         } catch (IOException e) {
             e.printStackTrace();
+        } finally {
+            controlLock.unlock();
+            disconnect();
+        }
+    }
+
+    /**
+     * 主动断开控制通道与所有传输通道。
+     */
+    public void disconnect() {
+        isRun = false;
+        if (ctChannel != null) {
+            try {
+                ctChannel.close();
+            } catch (IOException e) {
+                e.printStackTrace();
+            }
         }
         if (connections != null) {
             for (TransferConnection transferConnection : connections) {
@@ -227,9 +279,9 @@ public abstract class HFXClient extends HFXService {
                     e.printStackTrace();
                 }
             }
+            connections.clear();
         }
-        callBack.onExit();
-        //System.out.println("收到停止指令，客户端已正常关闭！");
+        freeBuffers();
     }
 
     private void handleListFiles() throws Exception {
@@ -240,7 +292,7 @@ public abstract class HFXClient extends HFXService {
             if (files != null) {
                 ctChannel.writeInt(files.size());
                 for (RemoteFile file : files) {
-                    writeFile(file);
+                    writeRemoteFile(ctChannel, file);
                 }
             } else {
                 ctChannel.writeInt(-1);
@@ -256,16 +308,14 @@ public abstract class HFXClient extends HFXService {
                 }
                 ctChannel.writeInt(files.size());
                 for (RemoteFile file : files) {
-                    writeFile(file);
+                    writeRemoteFile(ctChannel, file);
                 }
             } else {//Windows的
                 ctChannel.writeInt(roots.length);
                 for (File file : roots) {
-                    ctChannel.writeUTF(file.getPath());//不要getName，否则空白
-                    ctChannel.writeUTF(file.getPath());
-                    ctChannel.writeLong(file.lastModified());
-                    ctChannel.writeLong(file.length());
-                    ctChannel.writeBoolean(file.isDirectory());
+                    //不要getName，否则空白
+                    writeRemoteFile(ctChannel, new RemoteFile(
+                            file.getPath(), file.getPath(), file.lastModified(), file.length(), file.isDirectory()));
                 }
             }
         }
@@ -276,14 +326,6 @@ public abstract class HFXClient extends HFXService {
     }
 
     protected abstract List<RemoteFile> listFiles(String path) throws Exception;
-
-    private void writeFile(RemoteFile file) throws IOException {
-        ctChannel.writeUTF(file.getName());
-        ctChannel.writeUTF(file.getPath());
-        ctChannel.writeLong(file.lastModified());
-        ctChannel.writeLong(file.getSize());
-        ctChannel.writeBoolean(file.isDirectory());
-    }
 
     private void handleReceiveFiles() throws IOException {
         //System.out.println("准备接收");
@@ -297,13 +339,121 @@ public abstract class HFXClient extends HFXService {
         for (int i = 0; i < listSize; i++) {
             fileList.add(new RemoteFile(new File(ctChannel.readUTF())));
         }
-        Directory remoteDir = new Directory(ctChannel.readUTF(), ctChannel.readInt());//对方的localDir
+        Directory remoteDir = readDirectory(ctChannel);//对方的localDir
         Directory localDir = new Directory(ctChannel.readUTF(), Directory.getCurrentFileSystem());//对方为remoteDir
         callBack.onSending();
         isRun = sendFiles(fileList,localDir,remoteDir,callBack);
     }
 
-    protected void freeBuffers(){
+    /**
+     * PC 驱动模式：列出手机端目录。
+     * 返回 null 表示目录无法访问。
+     */
+    public List<RemoteFile> listServerFiles(String path) throws IOException {
+        controlLock.lock();
+        try {
+            ctChannel.writeShort(ControllerIdentifiers.PC_LIST_FILES);
+            ctChannel.writeUTF(path);
+            int listSize = ctChannel.readInt();
+            if (listSize == -1) {
+                return null;
+            }
+            List<RemoteFile> files = new ArrayList<>(listSize);
+            for (int i = 0; i < listSize; i++) {
+                files.add(readRemoteFile(ctChannel));
+            }
+            return files;
+        } finally {
+            controlLock.unlock();
+        }
+    }
+
+    /**
+     * PC 驱动模式：删除手机端文件或目录。
+     */
+    public boolean deleteServerFile(String path) throws IOException {
+        controlLock.lock();
+        try {
+            ctChannel.writeShort(ControllerIdentifiers.PC_DELETE_FILE);
+            ctChannel.writeUTF(path);
+            return ctChannel.readBoolean();
+        } finally {
+            controlLock.unlock();
+        }
+    }
+
+    /**
+     * PC 驱动模式：在手机端创建目录。
+     */
+    public boolean mkdirServer(String parent, String child) throws IOException {
+        controlLock.lock();
+        try {
+            ctChannel.writeShort(ControllerIdentifiers.PC_MKDIR);
+            ctChannel.writeUTF(parent);
+            ctChannel.writeUTF(child);
+            return ctChannel.readBoolean();
+        } finally {
+            controlLock.unlock();
+        }
+    }
+
+    /**
+     * PC 驱动模式：手机 -> PC。
+     *
+     * @param files     手机端文件列表
+     * @param localDir  手机端源目录
+     * @param remoteDir PC 端目标目录
+     */
+    public void downloadFiles(List<RemoteFile> files, Directory localDir, Directory remoteDir,
+                              TransferFileCallback callback) throws IOException {
+        controlLock.lock();
+        try {
+            ctChannel.writeShort(ControllerIdentifiers.PC_REQUEST_SEND);
+            ctChannel.writeInt(files.size());
+            for (RemoteFile file : files) {
+                ctChannel.writeUTF(file.getPath());
+            }
+            writeDirectory(ctChannel, localDir);
+            writeDirectory(ctChannel, remoteDir);
+            receiveFiles(callback);
+        } finally {
+            controlLock.unlock();
+        }
+    }
+
+    /**
+     * PC 驱动模式：PC -> 手机。
+     *
+     * @param files     PC 端文件列表
+     * @param localDir  PC 端源目录
+     * @param remoteDir 手机端目标目录
+     */
+    public void uploadFiles(List<RemoteFile> files, Directory localDir, Directory remoteDir,
+                            TransferFileCallback callback) throws IOException {
+        controlLock.lock();
+        try {
+            ctChannel.writeShort(ControllerIdentifiers.PC_REQUEST_RECEIVE);
+            writeDirectory(ctChannel, localDir);
+            writeDirectory(ctChannel, remoteDir);
+            sendFiles(files, localDir, remoteDir, callback);
+        } finally {
+            controlLock.unlock();
+        }
+    }
+
+    public boolean isPcDriveMode() {
+        return driveMode == DRIVE_MODE_PC;
+    }
+
+    public int getServerFileSystem() {
+        return serverFileSystem;
+    }
+
+    public String getServerHomeDir() {
+        return serverHomeDir;
+    }
+
+    public void freeBuffers(){
         buffers.clear();
     }
 

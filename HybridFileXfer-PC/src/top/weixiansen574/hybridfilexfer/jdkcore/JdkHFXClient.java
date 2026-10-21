@@ -15,7 +15,11 @@ import java.util.concurrent.LinkedBlockingDeque;
 public class JdkHFXClient extends HFXClient {
 
     public JdkHFXClient(String serverControllerAddress, int serverPort, String homeDir) {
-        super(serverControllerAddress, serverPort, homeDir);
+        this(serverControllerAddress, serverPort, homeDir, DRIVE_MODE_PHONE);
+    }
+
+    public JdkHFXClient(String serverControllerAddress, int serverPort, String homeDir, int driveMode) {
+        super(serverControllerAddress, serverPort, homeDir, driveMode);
     }
 
     @Override
@@ -32,7 +36,7 @@ public class JdkHFXClient extends HFXClient {
     protected boolean deleteLocalFile(String path) throws Exception {
         File file = new File(path);
         if (!file.exists()) {
-            System.out.println("文件或目录不存在: " + path);
+            System.err.println("文件或目录不存在: " + path);
             return false;
         }
 

@@ -140,4 +140,9 @@
     <string name="controller_channel_ip">Controller channel IP</string>
     <string name="any_connectable_network_card_ip">Any connectable network card IP</string>
     <string name="home_dir">Home directory</string>
+    <string name="allow_pc_file_management">Allow PC file management (PC control mode)</string>
+    <string name="pc_drive_mode_active">PC is managing files</string>
+    <string name="pc_drive_mode_started">PC has taken over file management</string>
+    <string name="pc_drive_mode_stopped">PC control mode ended: %1$s</string>
+    <string name="pc_drive_mode_rejected">Rejected a PC control request</string>
 </resources>

@@ -63,4 +63,15 @@ public class Config {
     public String getConnectServerControllerIp(){
         return preferences.getString("connect_server_controller_ip","");
     }
+
+    /**
+     * v3.1：是否允许 PC 客户端以驱动模式管理手机文件。
+     */
+    public boolean getPcDriveAllowed() {
+        return preferences.getBoolean("pc_drive_allowed", true);
+    }
+
+    public void setPcDriveAllowed(boolean allowed) {
+        preferences.edit().putBoolean("pc_drive_allowed", allowed).apply();
+    }
 }

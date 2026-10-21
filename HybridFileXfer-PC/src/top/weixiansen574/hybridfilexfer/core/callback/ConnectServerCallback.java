@@ -26,4 +26,10 @@ public interface ConnectServerCallback {
     void onRemoteOOM();
 
     void onConnectSuccess(List<String> channelNames);
+
+    /**
+     * v3.1：客户端请求 PC 驱动模式，但手机端未允许。
+     */
+    default void onDriveModeRejected() {
+    }
 }

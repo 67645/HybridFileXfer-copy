@@ -139,4 +139,9 @@
     <string name="controller_channel_ip">控制器通道IP</string>
     <string name="any_connectable_network_card_ip">任意可连接的网卡IP</string>
     <string name="home_dir">主目录</string>
+    <string name="allow_pc_file_management">允许电脑管理文件（PC 控制模式）</string>
+    <string name="pc_drive_mode_active">电脑正在管理文件</string>
+    <string name="pc_drive_mode_started">电脑已接管文件管理</string>
+    <string name="pc_drive_mode_stopped">电脑控制模式已结束：%1$s</string>
+    <string name="pc_drive_mode_rejected">已拒绝电脑控制请求</string>
 </resources>

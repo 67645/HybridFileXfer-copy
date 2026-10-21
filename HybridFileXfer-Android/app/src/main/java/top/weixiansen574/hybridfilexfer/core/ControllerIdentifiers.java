@@ -8,6 +8,13 @@ public class ControllerIdentifiers {
     public static final short REQUEST_RECEIVE = 10;
     public static final short REQUEST_SEND = 11;
 
+    // v3.1 PC 驱动模式：客户端 -> 服务端
+    public static final short PC_LIST_FILES = 20;
+    public static final short PC_DELETE_FILE = 21;
+    public static final short PC_MKDIR = 22;
+    public static final short PC_REQUEST_SEND = 23;//PC 请求手机发送文件到 PC
+    public static final short PC_REQUEST_RECEIVE = 24;//PC 请求手机接收 PC 发来的文件
+
     //就让魔法打败魔法吧！
     /**
      * 禁止转载应用到酷安

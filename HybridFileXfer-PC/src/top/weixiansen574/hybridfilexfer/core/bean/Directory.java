@@ -1,7 +1,5 @@
 package top.weixiansen574.hybridfilexfer.core.bean;
 
-import org.jetbrains.annotations.NotNull;
-
 import java.io.File;
 import java.util.ArrayList;
 import java.util.List;
@@ -12,7 +10,6 @@ import java.util.regex.Pattern;
 public class Directory {
     public static final int FILE_SYSTEM_UNIX = 0;
     public static final int FILE_SYSTEM_WINDOWS = 1;
-    @NotNull
     public final String path;
     public final int fileSystem;
 
@@ -159,7 +156,6 @@ public class Directory {
         }
     }
 
-    @NotNull
     @Override
     public String toString() {
         return "Directory{" +

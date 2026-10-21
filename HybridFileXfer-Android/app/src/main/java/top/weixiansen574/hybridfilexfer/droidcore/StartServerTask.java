@@ -24,19 +24,23 @@ public class StartServerTask extends BackstageTask<StartServerCallback> {
     private final List<ServerNetInterface> interfaceList;
     private final int localBufferCount;
     private final int remoteBufferCount;
+    private final boolean pcDriveAllowed;
 
-    public StartServerTask(StartServerCallback uiHandler, HFXServer server, int port, List<ServerNetInterface> interfaceList, int localBufferCount, int remoteBufferCount) {
+    public StartServerTask(StartServerCallback uiHandler, HFXServer server, int port,
+                           List<ServerNetInterface> interfaceList, int localBufferCount,
+                           int remoteBufferCount, boolean pcDriveAllowed) {
         super(uiHandler);
         this.server = server;
         this.port = port;
         this.interfaceList = interfaceList;
         this.localBufferCount = localBufferCount;
         this.remoteBufferCount = remoteBufferCount;
+        this.pcDriveAllowed = pcDriveAllowed;
     }
 
     @Override
     protected void onStart(StartServerCallback callback) throws Throwable {
-        server.startServer(port,interfaceList,localBufferCount,remoteBufferCount,callback);
+        server.startServer(port, interfaceList, localBufferCount, remoteBufferCount, pcDriveAllowed, callback);
     }
 
     @Override

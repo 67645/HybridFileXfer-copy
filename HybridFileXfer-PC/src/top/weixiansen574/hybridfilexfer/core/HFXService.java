@@ -15,7 +15,10 @@ import top.weixiansen574.nio.DataByteChannel;
 
 public abstract class HFXService {
     public static final String CLIENT_HEADER = "HFXC";
-    public static final int VERSION_CODE = 300;
+    public static final int VERSION_CODE = 310;
+    public static final int VERSION_CODE_LEGACY = 300;
+    public static final int DRIVE_MODE_PHONE = 0;
+    public static final int DRIVE_MODE_PC = 1;
     protected final LinkedBlockingDeque<ByteBuffer> buffers = new LinkedBlockingDeque<>();
     protected DataByteChannel ctChannel;
     protected List<TransferConnection> connections;
@@ -145,6 +148,33 @@ public abstract class HFXService {
             callback.onReadFileError(ctChannel.readUTF());
         }
         return true;
+    }
+
+    protected static void writeRemoteFile(DataByteChannel channel, RemoteFile file) throws IOException {
+        channel.writeUTF(file.getName());
+        channel.writeUTF(file.getPath());
+        channel.writeLong(file.lastModified());
+        channel.writeLong(file.getSize());
+        channel.writeBoolean(file.isDirectory());
+    }
+
+    protected static RemoteFile readRemoteFile(DataByteChannel channel) throws IOException {
+        return new RemoteFile(
+                channel.readUTF(),//name
+                channel.readUTF(),//path
+                channel.readLong(),//lastModified
+                channel.readLong(),//size
+                channel.readBoolean()//isDirectory
+        );
+    }
+
+    protected static void writeDirectory(DataByteChannel channel, Directory directory) throws IOException {
+        channel.writeUTF(directory.path);
+        channel.writeInt(directory.fileSystem);
+    }
+
+    protected static Directory readDirectory(DataByteChannel channel) throws IOException {
+        return new Directory(channel.readUTF(), channel.readInt());
     }
 
     protected abstract WriteFileCall createWriteFileCall(LinkedBlockingDeque<ByteBuffer> buffers, int dequeCount);

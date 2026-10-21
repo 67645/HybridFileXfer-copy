@@ -19,7 +19,7 @@ public class DroidHFXClient extends HFXClient {
     private final IIOService iioService;
     private final Context context;
     public DroidHFXClient(String serverControllerAddress, int serverPort,String homeDir, IIOService iioService, Context context) {
-        super(serverControllerAddress, serverPort,homeDir);
+        super(serverControllerAddress, serverPort, homeDir, DRIVE_MODE_PHONE);
         this.iioService = iioService;
         this.context = context;
     }

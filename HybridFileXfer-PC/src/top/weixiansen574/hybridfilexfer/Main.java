@@ -15,10 +15,15 @@ import java.io.BufferedReader;
 import java.io.File;
 import java.io.IOException;
 import java.io.InputStreamReader;
+import java.io.PrintStream;
+import java.io.UnsupportedEncodingException;
 import java.net.InetAddress;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.function.Consumer;
+
+import top.weixiansen574.hybridfilexfer.engine.EngineMain;
 
 public class Main {
     private static final ConnectServerCallback connectServerCallback = new ConnectServerCallback() {
@@ -35,6 +40,11 @@ public class Main {
         @Override
         public void onConnectControlFailed() {
             Strings.printf("connect_control_failed");
+        }
+
+        @Override
+        public void onDriveModeRejected() {
+            Strings.printf("drive_mode_rejected");
         }
 
         @Override
@@ -148,6 +158,20 @@ public class Main {
 
     /**主函数*/
     public static void main(String[] args) throws Exception {
+        //GUI 引擎模式：stdin/stdout 使用 JSON Lines
+        for (String arg : args) {
+            if ("--engine".equals(arg)) {
+                PrintStream out;
+                try {
+                    out = new PrintStream(System.out, true, "UTF-8");
+                } catch (UnsupportedEncodingException e) {
+                    out = System.out;
+                }
+                EngineMain.run(System.in, out);
+                return;
+            }
+        }
+
         Map<String, String> paramMap = new HashMap<>();
         parseArguments(paramMap, args);
 
@@ -257,6 +281,11 @@ public class Main {
     }
 
     public static boolean executeAdbForwardCommand(int port, String device) {
+        return executeAdbForwardCommand(port, device, System.out::println, System.err::println);
+    }
+
+    public static boolean executeAdbForwardCommand(int port, String device,
+                                                   Consumer<String> out, Consumer<String> err) {
         try {
             // 获取当前jar包所在的目录
             String jarDirectory = System.getProperty("user.dir");
@@ -290,14 +319,14 @@ public class Main {
             BufferedReader errorReader = new BufferedReader(new InputStreamReader(forwardProcess.getErrorStream()));
             String l;
             while ((l = errorReader.readLine()) != null) {
-                System.err.println(l);
+                err.accept(l);
             }
 
             // 读取adb forward命令执行的输出
             BufferedReader reader = new BufferedReader(new InputStreamReader(forwardProcess.getInputStream()));
             String line;
             while ((line = reader.readLine()) != null) {
-                System.out.println("adb:" + line);
+                out.accept("adb:" + line);
             }
 
             // 等待命令执行完成

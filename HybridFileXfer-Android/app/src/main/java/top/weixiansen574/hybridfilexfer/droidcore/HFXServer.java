@@ -1,7 +1,9 @@
 package top.weixiansen574.hybridfilexfer.droidcore;
 
+import android.os.Environment;
 import android.os.RemoteException;
 
+import java.io.File;
 import java.io.IOException;
 import java.net.InetSocketAddress;
 import java.nio.ByteBuffer;
@@ -29,6 +31,7 @@ import top.weixiansen574.hybridfilexfer.core.WriteFileCall;
 import top.weixiansen574.hybridfilexfer.core.bean.Directory;
 import top.weixiansen574.hybridfilexfer.core.bean.RemoteFile;
 import top.weixiansen574.hybridfilexfer.core.bean.ServerNetInterface;
+import top.weixiansen574.hybridfilexfer.core.bean.TrafficInfo;
 import top.weixiansen574.hybridfilexfer.droidcore.callback.StartServerCallback;
 import top.weixiansen574.hybridfilexfer.core.callback.TransferFileCallback;
 import top.weixiansen574.nio.DataByteChannel;
@@ -39,12 +42,22 @@ public class HFXServer extends HFXService {
     protected ServerSocketChannel serverSocketChannel;
     protected int remoteFileSystem;
     protected String remoteHomeDir;
+    protected int clientVersion = VERSION_CODE;
+    protected int driveMode = DRIVE_MODE_PHONE;
+    protected String serverHomeDir = "/";
+    private volatile boolean driveModeRunning = false;
+    private volatile boolean disconnectRequestedByUi = false;
+    private boolean closed = false;
+    private Thread commandThread;
+    private StartServerCallback serverCallback;
 
     public HFXServer(IIOService ioService) {
         this.ioService = ioService;
     }
 
-    public void startServer(int port, List<ServerNetInterface> interfaceList, int localBufferCount, int remoteBufferCount, StartServerCallback callback) throws IOException {
+    public void startServer(int port, List<ServerNetInterface> interfaceList, int localBufferCount,
+                            int remoteBufferCount, boolean pcDriveAllowed,
+                            StartServerCallback callback) throws IOException {
         ServerSocketChannel serverSocketChannel;
         try {
             serverSocketChannel = ServerSocketChannel.open().bind(new InetSocketAddress(port));
@@ -71,16 +84,37 @@ public class HFXServer extends HFXService {
                 ctChannel.close();
                 continue;
             }
-            //版本判断
+            //版本判断：v3.1 同时兼容旧版 v3.0
             int versionCode = ctChannel.readInt();
-            if (versionCode != HFXServer.VERSION_CODE) {
+            boolean legacy = versionCode == VERSION_CODE_LEGACY;
+            if (versionCode != VERSION_CODE && !legacy) {
                 //返回当前服务端版本信息
                 ctChannel.writeBoolean(false);//版本未正确匹配
-                ctChannel.writeInt(HFXServer.VERSION_CODE);
+                ctChannel.writeInt(VERSION_CODE);
                 ctChannel.close();
                 continue;
             }
             ctChannel.writeBoolean(true);//版本正确匹配
+            int driveMode = DRIVE_MODE_PHONE;
+            if (!legacy) {
+                //v3.1：读取客户端驱动模式
+                driveMode = ctChannel.readByte();
+                if (driveMode != DRIVE_MODE_PHONE && driveMode != DRIVE_MODE_PC) {
+                    ctChannel.writeBoolean(false);
+                    ctChannel.close();
+                    continue conn;
+                }
+                //PC 控制模式需要手机端允许
+                boolean driveModeAllowed = driveMode == DRIVE_MODE_PHONE || pcDriveAllowed;
+                ctChannel.writeBoolean(driveModeAllowed);
+                if (!driveModeAllowed) {
+                    ctChannel.close();
+                    callback.onPcDriveModeRejected();
+                    continue conn;
+                }
+            }
+            this.clientVersion = versionCode;
+            this.driveMode = driveMode;
             ctChannel.writeInt(interfaceList.size());//网卡IP数量
             for (ServerNetInterface netInterface : interfaceList) {
                 byte[] address = netInterface.address.getAddress();
@@ -147,10 +181,167 @@ public class HFXServer extends HFXService {
         this.remoteFileSystem = ctChannel.readInt();
         //读取对方设定的主目录
         this.remoteHomeDir = ctChannel.readUTF();
+        //v3.1：把自己的文件系统与主目录返回给对方
+        this.serverHomeDir = Environment.getExternalStorageDirectory().getAbsolutePath();
+        if (this.clientVersion != VERSION_CODE_LEGACY) {
+            ctChannel.writeInt(Directory.getCurrentFileSystem());
+            ctChannel.writeUTF(serverHomeDir);
+        }
         this.ctChannel = ctChannel;
         this.connections = connections;
+        this.serverCallback = callback;
         callback.onConnectSuccess();
+        if (this.driveMode == DRIVE_MODE_PC) {
+            callback.onPcDriveModeStarted();
+            driveModeRunning = true;
+            commandThread = new Thread(this::commandLoop, "ServerCommand");
+            commandThread.start();
+        }
     }
+
+    /**
+     * v3.1 PC 驱动模式：单线程处理客户端指令。
+     * 传输期间不处理新指令，确保控制通道一问一答。
+     */
+    private void commandLoop() {
+        String reason = null;
+        try {
+            while (driveModeRunning) {
+                short command = ctChannel.readShort();
+                switch (command) {
+                    case ControllerIdentifiers.PC_LIST_FILES:
+                        handlePcListFiles();
+                        break;
+                    case ControllerIdentifiers.PC_DELETE_FILE:
+                        handlePcDeleteFile();
+                        break;
+                    case ControllerIdentifiers.PC_MKDIR:
+                        handlePcMkdir();
+                        break;
+                    case ControllerIdentifiers.PC_REQUEST_SEND:
+                        handlePcRequestSend();
+                        break;
+                    case ControllerIdentifiers.PC_REQUEST_RECEIVE:
+                        handlePcRequestReceive();
+                        break;
+                    case ControllerIdentifiers.SHUTDOWN:
+                        reason = "client shutdown";
+                        driveModeRunning = false;
+                        break;
+                    default:
+                        throw new IOException("unknown PC command: " + command);
+                }
+            }
+        } catch (Exception e) {
+            reason = e.toString();
+        } finally {
+            driveModeRunning = false;
+            disconnect();
+            if (!disconnectRequestedByUi && serverCallback != null) {
+                serverCallback.onPcDriveModeStopped(reason);
+            }
+        }
+    }
+
+    private void handlePcListFiles() throws IOException {
+        String path = ctChannel.readUTF();
+        List<RemoteFile> files;
+        try {
+            files = listLocalFiles(path);
+        } catch (RemoteException e) {
+            files = null;
+        }
+        if (files == null) {
+            ctChannel.writeInt(-1);
+            return;
+        }
+        ctChannel.writeInt(files.size());
+        for (RemoteFile file : files) {
+            writeRemoteFile(ctChannel, file);
+        }
+    }
+
+    private void handlePcDeleteFile() throws IOException, RemoteException {
+        String path = ctChannel.readUTF();
+        ctChannel.writeBoolean(deleteLocalFile(path));
+    }
+
+    private void handlePcMkdir() throws IOException, RemoteException {
+        String parent = ctChannel.readUTF();
+        String child = ctChannel.readUTF();
+        ctChannel.writeBoolean(createLocalDir(parent, child));
+    }
+
+    /**
+     * PC 请求手机发送文件到 PC。
+     * 客户端会同时进入 receiveFiles，完成确认由现有控制通道协议处理。
+     */
+    private void handlePcRequestSend() throws IOException {
+        int listSize = ctChannel.readInt();
+        List<RemoteFile> fileList = new ArrayList<>(listSize);
+        for (int i = 0; i < listSize; i++) {
+            fileList.add(new RemoteFile(new File(ctChannel.readUTF())));
+        }
+        Directory localDir = readDirectory(ctChannel);//手机端源目录
+        Directory remoteDir = readDirectory(ctChannel);//PC 端目标目录
+        sendFiles(fileList, localDir, remoteDir, commandTransferCallback);
+    }
+
+    /**
+     * PC 请求向手机发送文件。
+     * 客户端会同时进入 sendFiles，完成确认由现有控制通道协议处理。
+     */
+    private void handlePcRequestReceive() throws IOException {
+        readDirectory(ctChannel);//PC 端源目录，当前接收端不需要
+        readDirectory(ctChannel);//手机端目标目录，负责生成路径的是发送端
+        receiveFiles(commandTransferCallback);
+    }
+
+    /**
+     * PC 驱动模式下的服务端传输回调。
+     * 进度由 PC 侧回调展示，这里只记录错误与完成信息。
+     */
+    private final TransferFileCallback commandTransferCallback = new TransferFileCallback() {
+        @Override
+        public void onFileUploading(String iName, String path, long targetSize, long totalSize) {
+        }
+
+        @Override
+        public void onFileDownloading(String iName, String path, long targetSize, long totalSize) {
+        }
+
+        @Override
+        public void onSpeedInfo(List<TrafficInfo> trafficInfoList) {
+        }
+
+        @Override
+        public void onChannelComplete(String iName, long traffic, long time) {
+        }
+
+        @Override
+        public void onChannelError(String iName, int errorType, String message) {
+            System.err.println("PC drive channel error: " + iName + " type=" + errorType + " " + message);
+        }
+
+        @Override
+        public void onReadFileError(String message) {
+            System.err.println("PC drive read error: " + message);
+        }
+
+        @Override
+        public void onWriteFileError(String message) {
+            System.err.println("PC drive write error: " + message);
+        }
+
+        @Override
+        public void onComplete(boolean isUpload, long traffic, long time) {
+        }
+
+        @Override
+        public void onIncomplete() {
+            System.err.println("PC drive transfer incomplete");
+        }
+    };
 
     public void closeServerSocket() {
         if (serverSocketChannel != null) {
@@ -163,11 +354,16 @@ public class HFXServer extends HFXService {
     }
 
     public void disconnect(BackstageTask.BaseEventHandler callback) {
+        disconnectRequestedByUi = true;
         new DisconnectTask(callback, this).execute();
     }
 
     public int getRemoteFileSystem() {
         return remoteFileSystem;
+    }
+
+    public boolean isPcDriveMode() {
+        return driveMode == DRIVE_MODE_PC;
     }
 
     public String getRemoteHomeDir() {
@@ -260,20 +456,25 @@ public class HFXServer extends HFXService {
         return names;
     }
 
-    public void disconnect(){
-        //释放缓冲区块内存
-        for (ByteBuffer buffer : buffers) {
-            NativeMemory.freeBuffer(buffer);
+    public synchronized void disconnect(){
+        if (closed) {
+            return;
         }
-        buffers.clear();
-        if (serverSocketChannel != null) {
-            if (ctChannel != null) {
-                try {
-                    //通知断开连接
-                    ctChannel.writeShort(ControllerIdentifiers.SHUTDOWN);
-                } catch (IOException ignored) {
-                }
+        closed = true;
+        driveModeRunning = false;
+        //先关闭控制通道与所有传输通道，避免传输线程继续使用缓冲区
+        if (ctChannel != null) {
+            try {
+                //通知断开连接
+                ctChannel.writeShort(ControllerIdentifiers.SHUTDOWN);
+            } catch (IOException ignored) {
             }
+            try {
+                ctChannel.close();
+            } catch (IOException ignored) {
+            }
+        }
+        if (serverSocketChannel != null) {
             try {
                 serverSocketChannel.close();
             } catch (IOException ignored) {
@@ -288,9 +489,19 @@ public class HFXServer extends HFXService {
                 }
             }
         }
+        //通道关闭后再释放缓冲区块内存
+        for (ByteBuffer buffer : buffers) {
+            NativeMemory.freeBuffer(buffer);
+        }
+        buffers.clear();
     }
 
-    public void close(){
+    public synchronized void close(){
+        if (closed) {
+            return;
+        }
+        closed = true;
+        driveModeRunning = false;
         //释放并清理缓冲区块
         for (ByteBuffer buffer : buffers) {
             NativeMemory.freeBuffer(buffer);
