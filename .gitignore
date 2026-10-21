@@ -5,3 +5,6 @@
 /HybridFileXfer-Windows/**/bin/
 /HybridFileXfer-Windows/**/obj/
 /HybridFileXfer-Windows/.vs/
+
+# GUI 发布包
+/dist/

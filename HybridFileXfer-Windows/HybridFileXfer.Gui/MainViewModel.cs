@@ -12,10 +12,14 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
 {
     private readonly DispatcherQueue _dispatcher;
     private readonly LocalFileService _localFiles = new();
+    private readonly SettingsService _settingsService = new();
+    private readonly BookmarkService _bookmarkService = new();
     private readonly string _jarPath;
     private Engine? _engine;
     private TransferJob? _activeJob;
     private bool _transferRunning;
+    private bool _cancelRequested;
+    private bool _useRecycleBin = true;
     private string _status = "未连接";
     private string _speedText = "";
     private string _logText = "";
@@ -36,8 +40,39 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
     {
         _dispatcher = dispatcher;
         _jarPath = Path.Combine(AppContext.BaseDirectory, "HybridFileXfer.jar");
+
+        var settings = _settingsService.Load();
+        var userProfile = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+        _localPath = Directory.Exists(settings.LocalPath) ? settings.LocalPath : userProfile;
+        _javaPath = string.IsNullOrWhiteSpace(settings.JavaPath) ? "java" : settings.JavaPath;
+        _homeDir = string.IsNullOrWhiteSpace(settings.HomeDir) ? userProfile : settings.HomeDir;
+        _modeIndex = settings.ModeIndex is 0 or 1 ? settings.ModeIndex : 0;
+        _address = settings.Address ?? "";
+        _port = string.IsNullOrWhiteSpace(settings.Port) ? "5740" : settings.Port;
+        _useRecycleBin = settings.UseRecycleBin;
+
         var bundledAdb = Path.Combine(AppContext.BaseDirectory, "adb.exe");
-        _adbPath = File.Exists(bundledAdb) ? bundledAdb : "adb";
+        if (!string.IsNullOrWhiteSpace(settings.AdbPath)
+            && (File.Exists(settings.AdbPath) || Directory.Exists(settings.AdbPath)))
+        {
+            _adbPath = settings.AdbPath;
+        }
+        else
+        {
+            _adbPath = File.Exists(bundledAdb) ? bundledAdb : "adb";
+        }
+
+        foreach (var bookmark in _bookmarkService.Load())
+        {
+            if (bookmark.IsRemote)
+            {
+                RemoteBookmarks.Add(bookmark);
+            }
+            else
+            {
+                LocalBookmarks.Add(bookmark);
+            }
+        }
     }
 
     public event PropertyChangedEventHandler? PropertyChanged;
@@ -46,6 +81,8 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
     public ObservableCollection<RemoteEntry> LocalEntries { get; } = new();
     public ObservableCollection<RemoteEntry> RemoteEntries { get; } = new();
     public ObservableCollection<TransferJob> TransferJobs { get; } = new();
+    public ObservableCollection<Bookmark> LocalBookmarks { get; } = new();
+    public ObservableCollection<Bookmark> RemoteBookmarks { get; } = new();
 
     public string Status
     {
@@ -97,6 +134,7 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
             if (SetProperty(ref _transferRunning, value))
             {
                 RaiseCapabilityChanged();
+                OnPropertyChanged(nameof(CanCancelCurrent));
             }
         }
     }
@@ -105,6 +143,7 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
     public bool CanDisconnect => IsConnected;
     public bool CanLocalOperate => !IsBusy && !IsTransferring;
     public bool CanRemoteOperate => IsConnected && !IsBusy && !IsTransferring;
+    public bool CanCancelCurrent => IsTransferring;
 
     public int ModeIndex
     {
@@ -140,6 +179,12 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
     {
         get => _adbPath;
         set => SetProperty(ref _adbPath, value);
+    }
+
+    public bool UseRecycleBin
+    {
+        get => _useRecycleBin;
+        set => SetProperty(ref _useRecycleBin, value);
     }
 
     public string LocalPath
@@ -402,9 +447,11 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
         }
         try
         {
-            await _localFiles.DeleteAsync(entries.Select(e => e.Path).ToList(), useRecycleBin: true);
+            await _localFiles.DeleteAsync(entries.Select(e => e.Path).ToList(), UseRecycleBin);
             await ListLocalAsync(LocalPath);
-            Status = $"已删除 {entries.Count} 个本机项目（回收站）";
+            Status = UseRecycleBin
+                ? $"已删除 {entries.Count} 个本机项目（回收站）"
+                : $"已删除 {entries.Count} 个本机项目";
             return true;
         }
         catch (Exception ex)
@@ -459,6 +506,99 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
         return true;
     }
 
+    public bool UploadPaths(IReadOnlyList<string> paths)
+    {
+        if (!CanRemoteOperate || paths.Count == 0)
+        {
+            return false;
+        }
+        EnqueueTransfer("upload", paths, LocalPath, RemotePath);
+        return true;
+    }
+
+    public bool DownloadPaths(IReadOnlyList<string> paths)
+    {
+        if (!CanRemoteOperate || paths.Count == 0)
+        {
+            return false;
+        }
+        EnqueueTransfer("download", paths, RemotePath, LocalPath);
+        return true;
+    }
+
+    public void AddBookmark(string path, bool isRemote)
+    {
+        if (string.IsNullOrWhiteSpace(path))
+        {
+            return;
+        }
+        var bookmarks = isRemote ? RemoteBookmarks : LocalBookmarks;
+        if (bookmarks.Any(b => string.Equals(b.Path, path, StringComparison.OrdinalIgnoreCase)))
+        {
+            Status = "该目录已在书签中";
+            return;
+        }
+        var leaf = Path.GetFileName(path.TrimEnd('/', '\\'));
+        var name = string.IsNullOrWhiteSpace(leaf) ? path : leaf;
+        bookmarks.Add(new Bookmark { Name = name, Path = path, IsRemote = isRemote });
+        SaveBookmarks();
+        Status = "已添加书签：" + name;
+    }
+
+    public async Task NavigateBookmarkAsync(Bookmark bookmark)
+    {
+        if (bookmark.IsRemote)
+        {
+            if (IsConnected)
+            {
+                await ListRemoteAsync(bookmark.Path);
+            }
+        }
+        else
+        {
+            await ListLocalAsync(bookmark.Path);
+        }
+    }
+
+    public async Task<bool> ApplySettingsAsync(string localPath, bool useRecycleBin)
+    {
+        if (!Directory.Exists(localPath))
+        {
+            Status = "本机目录不存在：" + localPath;
+            return false;
+        }
+        UseRecycleBin = useRecycleBin;
+        await ListLocalAsync(localPath);
+        SaveSettings();
+        Status = "设置已保存";
+        return true;
+    }
+
+    public async Task CancelCurrentAsync()
+    {
+        if (!IsTransferring || _engine is null)
+        {
+            return;
+        }
+        _cancelRequested = true;
+        Status = "正在取消当前传输...";
+        IsConnected = false;
+        Channels.Clear();
+        await DisposeEngineAsync();
+
+        if (_activeJob is not null)
+        {
+            _activeJob.Status = TransferJobStatus.Canceled;
+            _activeJob.Message = "用户取消";
+        }
+        CancelPendingJobs();
+        RemoteEntries.Clear();
+        RemoteCount = 0;
+        RemotePath = "";
+        SpeedText = "";
+        Status = "已取消当前传输并断开连接";
+    }
+
     public void CancelPendingJobs()
     {
         foreach (var job in TransferJobs.Where(j => j.Status == TransferJobStatus.Pending))
@@ -466,6 +606,26 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
             job.Status = TransferJobStatus.Canceled;
             job.Message = "已取消";
         }
+    }
+
+    private void SaveBookmarks()
+    {
+        _bookmarkService.Save(LocalBookmarks.Concat(RemoteBookmarks));
+    }
+
+    private void SaveSettings()
+    {
+        _settingsService.Save(new GuiSettings
+        {
+            LocalPath = LocalPath,
+            JavaPath = JavaPath,
+            AdbPath = AdbPath,
+            HomeDir = HomeDir,
+            ModeIndex = ModeIndex,
+            Address = Address,
+            Port = Port,
+            UseRecycleBin = UseRecycleBin
+        });
     }
 
     private void EnqueueTransfer(
@@ -532,10 +692,19 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
                 }
                 catch (Exception ex)
                 {
-                    job.Status = TransferJobStatus.Failed;
-                    job.Message = ex.Message;
-                    Status = $"{job.DirectionText}失败：{ex.Message}";
-                    AppendLog(ex.ToString());
+                    if (_cancelRequested)
+                    {
+                        job.Status = TransferJobStatus.Canceled;
+                        job.Message = "用户取消";
+                        Status = "已取消当前传输并断开连接";
+                    }
+                    else
+                    {
+                        job.Status = TransferJobStatus.Failed;
+                        job.Message = ex.Message;
+                        Status = $"{job.DirectionText}失败：{ex.Message}";
+                        AppendLog(ex.ToString());
+                    }
                     if (_engine is null || !IsConnected)
                     {
                         CancelPendingJobs();
@@ -550,6 +719,7 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
         }
         finally
         {
+            _cancelRequested = false;
             IsTransferring = false;
             SpeedText = "";
             if (IsConnected)
@@ -755,6 +925,7 @@ public sealed class MainViewModel : INotifyPropertyChanged, IAsyncDisposable
 
     public async ValueTask DisposeAsync()
     {
+        SaveSettings();
         CancelPendingJobs();
         await DisposeEngineAsync();
     }

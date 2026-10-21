@@ -1,0 +1,45 @@
+name: build-windows
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Set up .NET 8
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+
+      - name: Build PC engine jar
+        shell: pwsh
+        run: ./script/build-pc.ps1
+
+      - name: Publish WinUI 3 GUI
+        shell: pwsh
+        run: |
+          dotnet publish HybridFileXfer-Windows/HybridFileXfer.Gui/HybridFileXfer.Gui.csproj `
+            -c Release `
+            -p:Platform=x64 `
+            -r win-x64 `
+            --self-contained true `
+            -o dist/gui
+
+      - name: Upload GUI artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: HybridFileXfer-Gui-win-x64
+          path: dist/gui
+          if-no-files-found: error

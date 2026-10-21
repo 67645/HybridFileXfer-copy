@@ -27,6 +27,14 @@
     <ProjectReference Include="..\HybridFileXfer.EngineClient\HybridFileXfer.EngineClient.csproj" />
   </ItemGroup>
 
+  <!-- 非打包 WinUI 3 publish 不会自动带上应用 PRI，需手动复制，否则运行时 XAML 解析失败 -->
+  <Target Name="CopyPriToPublish" AfterTargets="Publish">
+    <Copy SourceFiles="$(TargetDir)$(TargetName).pri"
+          DestinationFolder="$(PublishDir)"
+          SkipUnchangedFiles="true"
+          Condition="Exists('$(TargetDir)$(TargetName).pri')" />
+  </Target>
+
   <ItemGroup>
     <Content Include="..\..\HybridFileXfer-PC\build\HybridFileXfer.jar"
              Link="HybridFileXfer.jar"

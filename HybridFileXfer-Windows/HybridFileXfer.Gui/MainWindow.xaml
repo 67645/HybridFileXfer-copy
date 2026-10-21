@@ -74,6 +74,10 @@
                     </DataTemplate>
                 </ItemsControl.ItemTemplate>
             </ItemsControl>
+            <Button x:Name="SettingsButton"
+                    Content="设置"
+                    Click="SettingsButton_Click"
+                    Margin="12,0,0,0" />
         </StackPanel>
 
         <Expander x:Name="ConnectionExpander" Grid.Row="1" Header="连接设置" IsExpanded="True">
@@ -143,6 +147,7 @@
                         <ColumnDefinition Width="*" />
                         <ColumnDefinition Width="Auto" />
                         <ColumnDefinition Width="Auto" />
+                        <ColumnDefinition Width="Auto" />
                     </Grid.ColumnDefinitions>
                     <TextBlock Text="本机"
                                VerticalAlignment="Center"
@@ -152,8 +157,9 @@
                              Text="{x:Bind ViewModel.LocalPath, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
                              KeyDown="LocalPath_KeyDown"
                              PlaceholderText="路径或「此电脑」" />
-                    <Button x:Name="LocalUpButton" Grid.Column="2" Content="上一级" Click="LocalUp_Click" />
-                    <Button x:Name="LocalRefreshButton" Grid.Column="3" Content="刷新" Click="LocalRefresh_Click" />
+                    <Button x:Name="LocalBookmarksButton" Grid.Column="2" Content="书签" Click="LocalBookmarks_Click" />
+                    <Button x:Name="LocalUpButton" Grid.Column="3" Content="上一级" Click="LocalUp_Click" />
+                    <Button x:Name="LocalRefreshButton" Grid.Column="4" Content="刷新" Click="LocalRefresh_Click" />
                 </Grid>
 
                 <StackPanel Grid.Row="1" Orientation="Horizontal" Spacing="8">
@@ -176,6 +182,11 @@
                           ItemsSource="{x:Bind ViewModel.LocalEntries, Mode=OneWay}"
                           ItemTemplate="{StaticResource FileItemTemplate}"
                           SelectionMode="Extended"
+                          AllowDrop="True"
+                          CanDragItems="True"
+                          DragItemsStarting="LocalList_DragItemsStarting"
+                          DragOver="LocalList_DragOver"
+                          Drop="LocalList_Drop"
                           DoubleTapped="LocalList_DoubleTapped" />
 
                 <TextBlock Grid.Row="3"
@@ -198,6 +209,7 @@
                         <ColumnDefinition Width="*" />
                         <ColumnDefinition Width="Auto" />
                         <ColumnDefinition Width="Auto" />
+                        <ColumnDefinition Width="Auto" />
                     </Grid.ColumnDefinitions>
                     <TextBlock Text="手机"
                                VerticalAlignment="Center"
@@ -207,8 +219,9 @@
                              Text="{x:Bind ViewModel.RemotePath, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
                              KeyDown="RemotePath_KeyDown"
                              PlaceholderText="手机路径，如 /sdcard" />
-                    <Button x:Name="RemoteUpButton" Grid.Column="2" Content="上一级" Click="RemoteUp_Click" />
-                    <Button x:Name="RemoteRefreshButton" Grid.Column="3" Content="刷新" Click="RemoteRefresh_Click" />
+                    <Button x:Name="RemoteBookmarksButton" Grid.Column="2" Content="书签" Click="RemoteBookmarks_Click" />
+                    <Button x:Name="RemoteUpButton" Grid.Column="3" Content="上一级" Click="RemoteUp_Click" />
+                    <Button x:Name="RemoteRefreshButton" Grid.Column="4" Content="刷新" Click="RemoteRefresh_Click" />
                 </Grid>
 
                 <StackPanel Grid.Row="1" Orientation="Horizontal" Spacing="8">
@@ -231,6 +244,11 @@
                           ItemsSource="{x:Bind ViewModel.RemoteEntries, Mode=OneWay}"
                           ItemTemplate="{StaticResource FileItemTemplate}"
                           SelectionMode="Extended"
+                          AllowDrop="True"
+                          CanDragItems="True"
+                          DragItemsStarting="RemoteList_DragItemsStarting"
+                          DragOver="RemoteList_DragOver"
+                          Drop="RemoteList_Drop"
                           DoubleTapped="RemoteList_DoubleTapped" />
 
                 <TextBlock Grid.Row="3"
@@ -252,6 +270,12 @@
                 </Grid.RowDefinitions>
                 <StackPanel Orientation="Horizontal" Spacing="8">
                     <TextBlock Text="传输队列" FontWeight="SemiBold" VerticalAlignment="Center" />
+                    <Button x:Name="CancelCurrentButton"
+                            Content="取消当前"
+                            Click="CancelCurrent_Click"
+                            IsEnabled="{x:Bind ViewModel.CanCancelCurrent, Mode=OneWay}"
+                            Padding="8,2"
+                            FontSize="12" />
                     <Button Content="取消等待"
                             Click="CancelPending_Click"
                             Padding="8,2"

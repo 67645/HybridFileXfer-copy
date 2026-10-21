@@ -2,7 +2,7 @@
 
 - 对应方案：[GUI 实施方案](./gui-implementation-plan.md)
 - 记录开始日期：2026-10-21
-- 当前阶段：P3 完成（双栏文件管理、传输队列、真机/模拟服务端 GUI E2E、路径与缓冲区加固）
+- 当前阶段：P4 核心完成（设置/书签/拖拽/冲突确认/取消传输/崩溃日志/发布脚本/Windows CI；GUI 多语言与 MSIX 待后续）
 
 ## 1. 环境信息
 
@@ -75,6 +75,16 @@
 | 2026-10-21 | P3 | `test/.../DirectoryPathTest.java` | 新增 Windows 路径兼容测试 | `DirectoryPathTest PASS` |
 | 2026-10-21 | P3 | `test/.../MockServerMain.java` | 新增 Mock 服务端 GUI 联调入口 | 成功输出端口并服务 |
 | 2026-10-21 | P3 | `test/.../EngineEndToEndTest.java` | 增加文件夹下载/上传及嵌套文件断言 | `P1 E2E PASS` |
+| 2026-10-21 | P4 | `Services/AppPaths.cs` | 统一 `%LOCALAPPDATA%\HybridFileXfer` 设置、书签、日志路径 | 构建通过 |
+| 2026-10-21 | P4 | `Services/GuiSettings.cs` | 设置模型与 JSON 持久化 | 关闭后 `gui-settings.json` 生成 |
+| 2026-10-21 | P4 | `Services/Bookmark.cs` | 书签模型与 JSON 持久化 | 添加后 `bookmarks.json` 生成 |
+| 2026-10-21 | P4 | `MainViewModel.cs` | 设置/书签/取消当前/路径缓存/回收站开关/队列取消状态 | 构建 + GUI 验证通过 |
+| 2026-10-21 | P4 | `MainWindow.xaml`、`MainWindow.xaml.cs` | 设置弹窗、书签菜单、拖拽事件、冲突确认、取消当前、日志目录入口 | 构建 + 自动化验证通过 |
+| 2026-10-21 | P4 | `App.xaml.cs` | 全局异常与崩溃日志写入 | 日志文件生成 |
+| 2026-10-21 | P4 | `HybridFileXfer.Gui.csproj` | 增加 `CopyPriToPublish`，修复 Release publish 缺少应用 PRI | Release 启动通过 |
+| 2026-10-21 | P4 | `script/build-gui.ps1` | 构建 jar、发布 self-contained GUI、生成 zip；优先使用本地 .NET 8 SDK | 生成 86.5MB zip |
+| 2026-10-21 | P4 | `.github/workflows/build-windows.yml` | Windows CI：JDK 17 + .NET 8 + jar + GUI publish + artifact | 待 CI 执行 |
+| 2026-10-21 | P4 | `.gitignore` | 忽略 `dist/` 发布包 | 仓库干净 |
 
 ## 4. 验证记录
 
@@ -126,6 +136,16 @@
 | 2026-10-21 | P3 文件夹传输 | `EngineEndToEndTest` 下载/上传 `subdir/nested.txt` | 嵌套文件内容断言通过 |
 | 2026-10-21 | P3 路径兼容 | `DirectoryPathTest` | `CON.txt`→`_CON.txt`、`COM1.log`→`_COM1.log`、结尾点/空格去除、`..`→`_` 全部通过 |
 | 2026-10-21 | P3 Android 构建 | 新代码 `gradlew assembleDebug --no-daemon` | `BUILD SUCCESSFUL`，APK 安装成功 |
+| 2026-10-21 | P4 Debug 构建 | `dotnet build HybridFileXfer.Gui -c Debug -p:Platform=x64` | 0 警告 0 错误 |
+| 2026-10-21 | P4 Release 首次启动 | publish 后运行 `HybridFileXfer.Gui.exe` | XAML 解析失败；排查为 publish 缺少 `HybridFileXfer.Gui.pri` |
+| 2026-10-21 | P4 PRI 修复 | 增加 `CopyPriToPublish` 后重新 publish | `HybridFileXfer.Gui.pri` 存在；Release 窗口标题 `多轨快传 GUI` |
+| 2026-10-21 | P4 设置 | GUI「设置」弹窗，检查默认目录/回收站/日志入口 | 弹窗内容正确；可取消 |
+| 2026-10-21 | P4 书签 | 收藏当前目录 | `bookmarks.json` 生成，包含 `C:\Users\mk` |
+| 2026-10-21 | P4 设置持久化 | 关闭窗口 | `gui-settings.json` 生成，连接参数与回收站开关已保存 |
+| 2026-10-21 | P4 冲突确认 | 本机与 Mock 目标同名 `remote-a.txt`，点击上传 | 弹「目标已存在」；选择「跳过冲突」后提示「没有需要传输的项目」 |
+| 2026-10-21 | P4 取消当前 | 真机 2GB 下载中点击「取消当前」并确认 | 任务「已取消/用户取消」，引擎进程退出，手机服务端恢复待连接 |
+| 2026-10-21 | P4 发布包 | `script/build-gui.ps1` | zip 86.5MB，包含 exe、jar、adb、PRI |
+| 2026-10-21 | P4 拖拽 | 代码实现本机↔手机拖拽与内部前缀校验 | 未做鼠标自动化；待人工验证 |
 
 ## 5. 问题与处理
 
@@ -151,8 +171,13 @@
 | 2026-10-21 | `LocalFileService` 的 `out` 变量触发 CS0165 | 先初始化 `error` 再传入 `out` |
 | 2026-10-21 | UI Automation 首次选择对话框输入框时选中了只读日志框 | 通过 `Name="名称"` 精确匹配对话框输入框；属于测试脚本问题，不是产品缺陷 |
 | 2026-10-21 | UI Automation 只能看到已虚拟化的 ListView 项 | GUI 渲染与操作正常；自动化按当前可见项选择。后续可给 `ListViewItem` 增加 `AutomationProperties.Name` 改善可访问性 |
-| 2026-10-21 | 当前传输没有优雅取消，取消需断开连接 | 记录为 P4 功能项；P3 的「取消等待」只取消未开始的队列任务 |
-| 2026-10-21 | Windows 长路径只做了 `longPathAware` 清单，未做超长路径压力测试 | 记录为 P4 验证项 |
+| 2026-10-21 | 当前传输没有优雅取消，取消需断开连接 | P4 已实现「取消当前」；协议级优雅取消仍留在后续 |
+| 2026-10-21 | Windows 长路径只做了 `longPathAware` 清单，未做超长路径压力测试 | 记录为后续验证项 |
+| 2026-10-21 | 非打包 WinUI 3 Release publish 缺少 `HybridFileXfer.Gui.pri`，启动时 XAML 解析失败 | 已在 csproj 增加 `CopyPriToPublish` 目标；Release 启动验证通过 |
+| 2026-10-21 | 取消传输后本地半成品文件仍为完整逻辑长度 | 接收端 `WriteFileCall` 预分配文件长度；取消后清理半成品列入后续 |
+| 2026-10-21 | 保存的 adb 绝对路径在换目录后可能失效 | 启动时检查路径是否存在，不存在则回退到程序目录自带 adb |
+| 2026-10-21 | 拖拽功能未做自动化鼠标验证 | 代码与内部数据前缀校验已完成；待人工验证 |
+| 2026-10-21 | GUI 多语言、MSIX、代码签名未实现 | 列入后续发布项 |
 
 ## 6. 待办
 
@@ -167,5 +192,8 @@
 - [x] P3：双栏文件管理与传输队列
 - [x] P3：本机/远程新建、删除、回收站、文件夹传输
 - [x] P3：传输线程/缓冲区释放加固、Windows 路径兼容性
-- [ ] P4：优雅取消传输、长路径压力测试
-- [ ] P4：安装包、CI、多语言、许可证
+- [x] P4：设置持久化、书签、双栏拖拽、冲突确认
+- [x] P4：取消当前传输、崩溃日志
+- [x] P4：GUI 发布脚本、Windows CI、发布包
+- [ ] 后续：协议级优雅取消、取消后半成品清理
+- [ ] 后续：GUI 多语言、MSIX 与代码签名、长路径压力测试

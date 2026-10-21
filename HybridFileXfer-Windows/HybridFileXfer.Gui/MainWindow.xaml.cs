@@ -1,7 +1,10 @@
+using System.Diagnostics;
 using HybridFileXfer.EngineClient;
+using HybridFileXfer.Gui.Services;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Input;
+using Windows.ApplicationModel.DataTransfer;
 using Windows.Graphics;
 using Windows.System;
 
@@ -111,7 +114,7 @@ public sealed partial class MainWindow : Window
             await ShowInfoAsync("请选择要上传的文件或文件夹");
             return;
         }
-        ViewModel.UploadSelected(entries);
+        await UploadEntriesAsync(entries);
     }
 
     private async void DownloadButton_Click(object sender, RoutedEventArgs e)
@@ -120,6 +123,58 @@ public sealed partial class MainWindow : Window
         if (entries.Count == 0)
         {
             await ShowInfoAsync("请选择要下载的文件或文件夹");
+            return;
+        }
+        await DownloadEntriesAsync(entries);
+    }
+
+    private async Task UploadEntriesAsync(IReadOnlyList<RemoteEntry> entries)
+    {
+        var conflicts = entries
+            .Where(entry => ViewModel.RemoteEntries.Any(remote =>
+                string.Equals(remote.Name, entry.Name, StringComparison.OrdinalIgnoreCase)))
+            .ToList();
+        if (conflicts.Count > 0)
+        {
+            var result = await ShowConflictDialogAsync(conflicts.Count, "手机");
+            if (result == ContentDialogResult.None)
+            {
+                return;
+            }
+            if (result == ContentDialogResult.Secondary)
+            {
+                entries = entries.Except(conflicts).ToList();
+            }
+        }
+        if (entries.Count == 0)
+        {
+            await ShowInfoAsync("没有需要传输的项目");
+            return;
+        }
+        ViewModel.UploadSelected(entries);
+    }
+
+    private async Task DownloadEntriesAsync(IReadOnlyList<RemoteEntry> entries)
+    {
+        var conflicts = entries
+            .Where(entry => ViewModel.LocalEntries.Any(local =>
+                string.Equals(local.Name, entry.Name, StringComparison.OrdinalIgnoreCase)))
+            .ToList();
+        if (conflicts.Count > 0)
+        {
+            var result = await ShowConflictDialogAsync(conflicts.Count, "本机");
+            if (result == ContentDialogResult.None)
+            {
+                return;
+            }
+            if (result == ContentDialogResult.Secondary)
+            {
+                entries = entries.Except(conflicts).ToList();
+            }
+        }
+        if (entries.Count == 0)
+        {
+            await ShowInfoAsync("没有需要传输的项目");
             return;
         }
         ViewModel.DownloadSelected(entries);
@@ -174,6 +229,223 @@ public sealed partial class MainWindow : Window
     private void CancelPending_Click(object sender, RoutedEventArgs e)
     {
         ViewModel.CancelPendingJobs();
+    }
+
+    private async void CancelCurrent_Click(object sender, RoutedEventArgs e)
+    {
+        if (!ViewModel.IsTransferring)
+        {
+            return;
+        }
+        if (await ConfirmAsync("取消当前传输将中断传输并断开手机连接，确定继续？"))
+        {
+            await ViewModel.CancelCurrentAsync();
+        }
+    }
+
+    private async void SettingsButton_Click(object sender, RoutedEventArgs e)
+    {
+        var localPathBox = new TextBox
+        {
+            Header = "默认本机目录",
+            Text = ViewModel.LocalPath,
+            Width = 520
+        };
+        var recycleCheck = new CheckBox
+        {
+            Content = "删除本机项目时移入回收站",
+            IsChecked = ViewModel.UseRecycleBin
+        };
+        var logButton = new Button { Content = "打开日志目录" };
+        logButton.Click += (_, _) =>
+        {
+            try
+            {
+                Process.Start(new ProcessStartInfo(AppPaths.LogDirectory) { UseShellExecute = true });
+            }
+            catch
+            {
+                // 打开失败时忽略
+            }
+        };
+
+        var panel = new StackPanel { Spacing = 8 };
+        panel.Children.Add(localPathBox);
+        panel.Children.Add(recycleCheck);
+        panel.Children.Add(logButton);
+
+        var dialog = new ContentDialog
+        {
+            Title = "设置",
+            Content = panel,
+            PrimaryButtonText = "保存",
+            CloseButtonText = "取消",
+            DefaultButton = ContentDialogButton.Primary,
+            XamlRoot = Content.XamlRoot
+        };
+        if (await dialog.ShowAsync() == ContentDialogResult.Primary)
+        {
+            await ViewModel.ApplySettingsAsync(localPathBox.Text, recycleCheck.IsChecked == true);
+        }
+    }
+
+    private void LocalBookmarks_Click(object sender, RoutedEventArgs e)
+    {
+        ShowBookmarks(sender as Button, isRemote: false);
+    }
+
+    private void RemoteBookmarks_Click(object sender, RoutedEventArgs e)
+    {
+        ShowBookmarks(sender as Button, isRemote: true);
+    }
+
+    private void ShowBookmarks(Button? anchor, bool isRemote)
+    {
+        if (anchor is null)
+        {
+            return;
+        }
+        var flyout = new MenuFlyout();
+        var addItem = new MenuFlyoutItem { Text = "收藏当前目录" };
+        addItem.Click += (_, _) =>
+        {
+            ViewModel.AddBookmark(isRemote ? ViewModel.RemotePath : ViewModel.LocalPath, isRemote);
+        };
+        flyout.Items.Add(addItem);
+
+        var bookmarks = isRemote ? ViewModel.RemoteBookmarks : ViewModel.LocalBookmarks;
+        if (bookmarks.Count > 0)
+        {
+            flyout.Items.Add(new MenuFlyoutSeparator());
+        }
+        foreach (var bookmark in bookmarks)
+        {
+            var item = new MenuFlyoutItem { Text = bookmark.DisplayName };
+            item.Click += async (_, _) => await ViewModel.NavigateBookmarkAsync(bookmark);
+            flyout.Items.Add(item);
+        }
+        flyout.ShowAt(anchor);
+    }
+
+    private const string LocalDragPrefix = "HFX-LOCAL\n";
+    private const string RemoteDragPrefix = "HFX-REMOTE\n";
+
+    private void LocalList_DragItemsStarting(object sender, DragItemsStartingEventArgs e)
+    {
+        var paths = e.Items.OfType<RemoteEntry>().Select(entry => entry.Path).ToList();
+        if (paths.Count == 0)
+        {
+            e.Cancel = true;
+            return;
+        }
+        e.Data.SetText(LocalDragPrefix + string.Join('\n', paths));
+        e.Data.RequestedOperation = DataPackageOperation.Copy;
+    }
+
+    private void RemoteList_DragItemsStarting(object sender, DragItemsStartingEventArgs e)
+    {
+        var paths = e.Items.OfType<RemoteEntry>().Select(entry => entry.Path).ToList();
+        if (paths.Count == 0)
+        {
+            e.Cancel = true;
+            return;
+        }
+        e.Data.SetText(RemoteDragPrefix + string.Join('\n', paths));
+        e.Data.RequestedOperation = DataPackageOperation.Copy;
+    }
+
+    private void LocalList_DragOver(object sender, DragEventArgs e)
+    {
+        e.AcceptedOperation = ViewModel.CanLocalOperate && e.DataView.Contains(StandardDataFormats.Text)
+            ? DataPackageOperation.Copy
+            : DataPackageOperation.None;
+    }
+
+    private void RemoteList_DragOver(object sender, DragEventArgs e)
+    {
+        e.AcceptedOperation = ViewModel.CanRemoteOperate && e.DataView.Contains(StandardDataFormats.Text)
+            ? DataPackageOperation.Copy
+            : DataPackageOperation.None;
+    }
+
+    private async void LocalList_Drop(object sender, DragEventArgs e)
+    {
+        if (!ViewModel.CanLocalOperate || !e.DataView.Contains(StandardDataFormats.Text))
+        {
+            return;
+        }
+        var text = await e.DataView.GetTextAsync();
+        if (!text.StartsWith(RemoteDragPrefix, StringComparison.Ordinal))
+        {
+            return;
+        }
+        var paths = ParseDroppedPaths(text[RemoteDragPrefix.Length..]);
+        var entries = paths.Select(path => new RemoteEntry
+        {
+            Name = GetLeafName(path),
+            Path = path,
+            IsDirectory = false
+        }).ToList();
+        if (entries.Count > 0)
+        {
+            await DownloadEntriesAsync(entries);
+        }
+    }
+
+    private async void RemoteList_Drop(object sender, DragEventArgs e)
+    {
+        if (!ViewModel.CanRemoteOperate || !e.DataView.Contains(StandardDataFormats.Text))
+        {
+            return;
+        }
+        var text = await e.DataView.GetTextAsync();
+        if (!text.StartsWith(LocalDragPrefix, StringComparison.Ordinal))
+        {
+            return;
+        }
+        var paths = ParseDroppedPaths(text[LocalDragPrefix.Length..]);
+        var entries = paths.Select(path => new RemoteEntry
+        {
+            Name = GetLeafName(path),
+            Path = path,
+            IsDirectory = Directory.Exists(path)
+        }).ToList();
+        if (entries.Count > 0)
+        {
+            await UploadEntriesAsync(entries);
+        }
+    }
+
+    private static List<string> ParseDroppedPaths(string text)
+    {
+        return text.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .Where(path => !string.IsNullOrWhiteSpace(path))
+            .ToList();
+    }
+
+    private static string GetLeafName(string path)
+    {
+        var leaf = Path.GetFileName(path.TrimEnd('/', '\\'));
+        return string.IsNullOrWhiteSpace(leaf) ? path : leaf;
+    }
+
+    private async Task<ContentDialogResult> ShowConflictDialogAsync(int conflictCount, string targetName)
+    {
+        var dialog = new ContentDialog
+        {
+            Title = "目标已存在",
+            Content = new TextBlock
+            {
+                Text = $"{targetName}目标目录中有 {conflictCount} 个同名项目。继续将覆盖同名文件。",
+                TextWrapping = TextWrapping.Wrap
+            },
+            PrimaryButtonText = "覆盖",
+            SecondaryButtonText = "跳过冲突",
+            CloseButtonText = "取消",
+            DefaultButton = ContentDialogButton.Primary,
+            XamlRoot = Content.XamlRoot
+        };
+        return await dialog.ShowAsync();
     }
 
     private static List<RemoteEntry> GetSelectedEntries(ListView listView)
