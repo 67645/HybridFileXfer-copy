@@ -404,8 +404,8 @@ public abstract class HFXClient extends HFXService {
      * @param localDir  手机端源目录
      * @param remoteDir PC 端目标目录
      */
-    public void downloadFiles(List<RemoteFile> files, Directory localDir, Directory remoteDir,
-                              TransferFileCallback callback) throws IOException {
+    public boolean downloadFiles(List<RemoteFile> files, Directory localDir, Directory remoteDir,
+                                 TransferFileCallback callback) throws IOException {
         controlLock.lock();
         try {
             ctChannel.writeShort(ControllerIdentifiers.PC_REQUEST_SEND);
@@ -415,7 +415,7 @@ public abstract class HFXClient extends HFXService {
             }
             writeDirectory(ctChannel, localDir);
             writeDirectory(ctChannel, remoteDir);
-            receiveFiles(callback);
+            return receiveFiles(callback);
         } finally {
             controlLock.unlock();
         }
@@ -428,14 +428,14 @@ public abstract class HFXClient extends HFXService {
      * @param localDir  PC 端源目录
      * @param remoteDir 手机端目标目录
      */
-    public void uploadFiles(List<RemoteFile> files, Directory localDir, Directory remoteDir,
-                            TransferFileCallback callback) throws IOException {
+    public boolean uploadFiles(List<RemoteFile> files, Directory localDir, Directory remoteDir,
+                               TransferFileCallback callback) throws IOException {
         controlLock.lock();
         try {
             ctChannel.writeShort(ControllerIdentifiers.PC_REQUEST_RECEIVE);
             writeDirectory(ctChannel, localDir);
             writeDirectory(ctChannel, remoteDir);
-            sendFiles(files, localDir, remoteDir, callback);
+            return sendFiles(files, localDir, remoteDir, callback);
         } finally {
             controlLock.unlock();
         }
@@ -454,7 +454,10 @@ public abstract class HFXClient extends HFXService {
     }
 
     public void freeBuffers(){
-        buffers.clear();
+        //直接内存由 GC 管理；传输线程仍在收尾时先不清理队列，避免影响在途缓冲区
+        if (!hasActiveTransfers()) {
+            buffers.clear();
+        }
     }
 
 }

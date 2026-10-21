@@ -266,7 +266,8 @@ public final class EngineMain {
             Directory source = new Directory(sourceDir, Directory.getCurrentFileSystem());
             Directory target = new Directory(targetDir, client.getServerFileSystem());
             emitState("uploading");
-            client.uploadFiles(files, source, target, transferCallback("upload"));
+            boolean success = client.uploadFiles(files, source, target, transferCallback("upload"));
+            emitResult(id, success);
         }
 
         private void handleDownload(Map<String, Object> request, Object id) throws IOException {
@@ -287,7 +288,8 @@ public final class EngineMain {
             Directory source = new Directory(sourceDir, client.getServerFileSystem());
             Directory target = new Directory(targetDir, Directory.getCurrentFileSystem());
             emitState("downloading");
-            client.downloadFiles(files, source, target, transferCallback("download"));
+            boolean success = client.downloadFiles(files, source, target, transferCallback("download"));
+            emitResult(id, success);
         }
 
         private TransferFileCallback transferCallback(String direction) {

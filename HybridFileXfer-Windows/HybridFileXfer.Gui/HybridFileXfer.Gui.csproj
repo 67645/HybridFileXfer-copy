@@ -1,0 +1,49 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net8.0-windows10.0.19041.0</TargetFramework>
+    <TargetPlatformMinVersion>10.0.17763.0</TargetPlatformMinVersion>
+    <RootNamespace>HybridFileXfer.Gui</RootNamespace>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+    <Platforms>x64</Platforms>
+    <PlatformTarget>x64</PlatformTarget>
+    <RuntimeIdentifier>win-x64</RuntimeIdentifier>
+    <UseWinUI>true</UseWinUI>
+    <WindowsPackageType>None</WindowsPackageType>
+    <WindowsAppSDKSelfContained>true</WindowsAppSDKSelfContained>
+    <SelfContained>true</SelfContained>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <LangVersion>latest</LangVersion>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.WindowsAppSDK" Version="1.*" />
+    <PackageReference Include="Microsoft.Windows.SDK.BuildTools" Version="10.*" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\HybridFileXfer.EngineClient\HybridFileXfer.EngineClient.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Content Include="..\..\HybridFileXfer-PC\build\HybridFileXfer.jar"
+             Link="HybridFileXfer.jar"
+             CopyToOutputDirectory="PreserveNewest"
+             Condition="Exists('..\..\HybridFileXfer-PC\build\HybridFileXfer.jar')" />
+    <Content Include="..\..\HybridFileXfer-PC\adb.exe"
+             Link="adb.exe"
+             CopyToOutputDirectory="PreserveNewest"
+             Condition="Exists('..\..\HybridFileXfer-PC\adb.exe')" />
+    <Content Include="..\..\HybridFileXfer-PC\AdbWinApi.dll"
+             Link="AdbWinApi.dll"
+             CopyToOutputDirectory="PreserveNewest"
+             Condition="Exists('..\..\HybridFileXfer-PC\AdbWinApi.dll')" />
+    <Content Include="..\..\HybridFileXfer-PC\AdbWinUsbApi.dll"
+             Link="AdbWinUsbApi.dll"
+             CopyToOutputDirectory="PreserveNewest"
+             Condition="Exists('..\..\HybridFileXfer-PC\AdbWinUsbApi.dll')" />
+  </ItemGroup>
+
+</Project>

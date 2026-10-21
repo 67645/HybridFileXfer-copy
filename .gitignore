@@ -1,2 +1,7 @@
 # PC 端编译产物
 /HybridFileXfer-PC/build/
+
+# WinUI / .NET 编译产物
+/HybridFileXfer-Windows/**/bin/
+/HybridFileXfer-Windows/**/obj/
+/HybridFileXfer-Windows/.vs/

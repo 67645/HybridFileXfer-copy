@@ -2,7 +2,7 @@
 
 - 文档版本：v0.1
 - 创建日期：2026-10-21
-- 当前阶段：P1 完成（引擎 + jar + Mock E2E + Android 构建 + 真机 E2E 均通过）
+- 当前阶段：P3 完成（双栏文件管理、传输队列、真机/模拟服务端 GUI E2E、路径与缓冲区加固）
 - 关联文档：[GUI 实施记录](./gui-implementation-log.md)
 
 ## 1. 背景与目标
@@ -233,23 +233,44 @@
 
 ### 5.3 WinUI 3 端
 
-工程建议：
+实际工程结构（P2 已完成）：
 
 ```text
 HybridFileXfer-Windows/
-├── HybridFileXfer.Gui/                 # WinUI 3 应用
-├── HybridFileXfer.EngineClient/        # Java 进程与 JSON IPC 封装
-└── HybridFileXfer.Gui.Tests/           # 视图模型与 IPC 测试
+├── HybridFileXfer.EngineClient/          # 纯 .NET 8，Java 进程 + JSON Lines 桥接
+├── HybridFileXfer.Gui/                   # WinUI 3 应用（unpackaged self-contained）
+└── HybridFileXfer.EngineClient.Smoke/    # 控制台桥接冒烟测试
 ```
 
-功能拆分：
+P2 已实现：
 
-- `ConnectionPage`：ADB/IP、设备、Java 检测、连接。
-- `MainPage`：左侧本地文件、右侧手机文件、传输队列、通道状态。
-- `SettingsPage`：默认目录、Java 路径、主题、语言、缓冲区展示。
-- `LogPage`：引擎日志与错误。
-- MVVM：CommunityToolkit.Mvvm；本地文件用 C# 直接枚举，远程用引擎。
-- 打包：先 non-packaged self-contained；稳定后 MSIX。
+- 连接表单：ADB/IP、地址、端口、PC 主目录、Java 路径、adb 路径。
+- 状态、通道列表、速度、远程目录列表、日志。
+- `MainViewModel`（轻量 MVVM）负责连接/断开/列目录与引擎事件分发。
+- 引擎进程桥接：`EngineClient` 启动 `java -jar HybridFileXfer.jar --engine`，
+  发送 JSON Lines 指令，按 `id` 关联响应，并转发状态/进度/速度/错误事件。
+- adb 路径：支持传目录或 adb.exe 路径，桥接会把其目录加入子进程 PATH。
+- 默认把 `HybridFileXfer.jar`、`adb.exe` 及其 DLL 复制到 GUI 输出目录。
+
+P3 已实现：
+
+- 左侧本机、右侧手机的双栏文件管理。
+- 本机驱动器/目录浏览、路径跳转、上一级、刷新、双击打开。
+- 手机目录浏览、上一级、刷新、双击进入/下载。
+- 本机新建目录、删除（回收站）、打开文件。
+- 手机新建目录、删除。
+- 双向传输、传输队列、文件/整体进度、各通道速度、错误显示。
+- 传输期间禁用远程操作，避免控制通道事务交错。
+- 队列「取消等待」；当前传输取消需断开连接（P4 再实现优雅取消）。
+- Windows 路径兼容：保留名、结尾点/空格；清单启用 `longPathAware`。
+- 传输缓冲区延迟释放：传输线程仍在运行时等待其结束。
+
+尚未实现：
+
+- 拖拽、书签、设置页、冲突自动改名、当前传输优雅取消。
+- 完整 MVVM 框架重构（当前为轻量 MVVM）。
+
+打包：先 non-packaged self-contained；稳定后 MSIX。
 
 ### 5.4 构建与发布
 
@@ -268,12 +289,12 @@ HybridFileXfer-Windows/
 | P0 | 协议常量、握手、服务端命令循环、客户端驱动 API、Android 开关 | PC 侧可编译；协议帧与规格一致 |
 | P1 | Java 引擎 JSON IPC + 控制台验证 | 连接、列手机目录、手机→PC、PC→手机、删除/新建全部通过 |
 | P2 | WinUI 3 工程骨架 + 连接页 | 可连接、显示通道状态、显示远程目录 |
-| P3 | 双栏文件管理 + 传输队列 + 进度 | 完整文件管理可用；异常可恢复 |
+| P3 | 双栏文件管理 + 传输队列 + 进度 | 已完成：本机/手机浏览、双向传输、新建/删除、异常恢复均验证通过 |
 | P4 | 安装包、CI、多语言、许可证、日志 | 可安装、可发布 |
 
 Go/No-Go：P1 控制台端到端验证通过后再投入 P3 的 UI 工作量。
 
-当前状态：P0、P1 已完成；Mock 服务端 E2E、Android 构建、真机 E2E（含 ADB 模式与异常断开）均通过。P2 WinUI 工程尚未开始。
+当前状态：P0–P3 已完成；Mock/真机 E2E、Android 构建、WinUI 3 构建与 GUI 全流程（连接、浏览、双向传输、新建、删除、异常断开）均通过。P4 待开始。
 
 ## 7. 主要风险
 

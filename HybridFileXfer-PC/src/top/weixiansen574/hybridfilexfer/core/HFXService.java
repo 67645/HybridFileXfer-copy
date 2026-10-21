@@ -7,6 +7,7 @@ import java.util.List;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.FutureTask;
 import java.util.concurrent.LinkedBlockingDeque;
+import java.util.concurrent.atomic.AtomicInteger;
 
 import top.weixiansen574.hybridfilexfer.core.bean.Directory;
 import top.weixiansen574.hybridfilexfer.core.bean.RemoteFile;
@@ -20,10 +21,20 @@ public abstract class HFXService {
     public static final int DRIVE_MODE_PHONE = 0;
     public static final int DRIVE_MODE_PC = 1;
     protected final LinkedBlockingDeque<ByteBuffer> buffers = new LinkedBlockingDeque<>();
+    protected final AtomicInteger activeTransfers = new AtomicInteger();
     protected DataByteChannel ctChannel;
     protected List<TransferConnection> connections;
 
+    /**
+     * 传输线程是否仍在运行。用于断开时延迟释放直接内存，避免线程仍持有缓冲区。
+     */
+    protected boolean hasActiveTransfers() {
+        return activeTransfers.get() > 0;
+    }
+
     protected boolean sendFiles(List<RemoteFile> fileList,Directory localDir, Directory remoteDir, TransferFileCallback callback) throws IOException {
+        activeTransfers.incrementAndGet();
+        try {
         ReadFileCall readFileCall = createReadFileCall(buffers, fileList, localDir, remoteDir, connections.size());
         FutureTask<Void> readFileTask = new FutureTask<>(readFileCall);
         Thread readThread = new Thread(readFileTask);
@@ -90,9 +101,14 @@ public abstract class HFXService {
 
         callback.onComplete(true,totalUploadTraffic, System.currentTimeMillis() - startTime);
         return true;
+        } finally {
+            activeTransfers.decrementAndGet();
+        }
     }
 
     protected boolean receiveFiles(TransferFileCallback callback) throws IOException {
+        activeTransfers.incrementAndGet();
+        try {
         WriteFileCall writeFileCall = createWriteFileCall(buffers, connections.size());
         long startTime = System.currentTimeMillis();
 
@@ -148,6 +164,9 @@ public abstract class HFXService {
             callback.onReadFileError(ctChannel.readUTF());
         }
         return true;
+        } finally {
+            activeTransfers.decrementAndGet();
+        }
     }
 
     protected static void writeRemoteFile(DataByteChannel channel, RemoteFile file) throws IOException {

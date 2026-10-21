@@ -489,11 +489,8 @@ public class HFXServer extends HFXService {
                 }
             }
         }
-        //通道关闭后再释放缓冲区块内存
-        for (ByteBuffer buffer : buffers) {
-            NativeMemory.freeBuffer(buffer);
-        }
-        buffers.clear();
+        //通道关闭后再释放缓冲区块内存；若传输线程仍在收尾则延迟释放
+        freeBuffersWhenIdle();
     }
 
     public synchronized void close(){
@@ -502,11 +499,8 @@ public class HFXServer extends HFXService {
         }
         closed = true;
         driveModeRunning = false;
-        //释放并清理缓冲区块
-        for (ByteBuffer buffer : buffers) {
-            NativeMemory.freeBuffer(buffer);
-        }
-        buffers.clear();
+        //释放并清理缓冲区块；若传输线程仍在收尾则延迟释放
+        freeBuffersWhenIdle();
         //关闭serverSocket，释放端口绑定，不用管其他accept的Socket
         if (serverSocketChannel != null) {
             try {
@@ -514,6 +508,38 @@ public class HFXServer extends HFXService {
             } catch (IOException e) {
                 e.printStackTrace();
             }
+        }
+    }
+
+    /**
+     * 传输线程仍在使用缓冲区时，等待其结束后再释放直接内存。
+     */
+    private void freeBuffersWhenIdle() {
+        if (!hasActiveTransfers()) {
+            freeBuffersNative();
+            return;
+        }
+        Thread releaseThread = new Thread(() -> {
+            for (int i = 0; i < 100 && hasActiveTransfers(); i++) {
+                try {
+                    Thread.sleep(50);
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                    break;
+                }
+            }
+            freeBuffersNative();
+        }, "ServerBufferRelease");
+        releaseThread.setDaemon(true);
+        releaseThread.start();
+    }
+
+    private void freeBuffersNative() {
+        synchronized (buffers) {
+            for (ByteBuffer buffer : buffers) {
+                NativeMemory.freeBuffer(buffer);
+            }
+            buffers.clear();
         }
     }
 

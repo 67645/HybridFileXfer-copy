@@ -35,9 +35,12 @@ public final class EngineEndToEndTest {
         Path empty = mockSource.resolve("empty.bin");
         Path chinese = mockSource.resolve("中文.txt");
         Path oneMb = mockSource.resolve("1mb.bin");
+        Path mockDir = Files.createDirectories(mockSource.resolve("subdir"));
+        Path nested = mockDir.resolve("nested.txt");
         Files.write(hello, "hello".getBytes(StandardCharsets.UTF_8));
         Files.write(empty, new byte[0]);
         Files.write(chinese, "你好，多轨快传".getBytes(StandardCharsets.UTF_8));
+        Files.write(nested, "nested".getBytes(StandardCharsets.UTF_8));
         byte[] mb = new byte[1024 * 1024];
         for (int i = 0; i < mb.length; i++) {
             mb[i] = (byte) (i & 0xFF);
@@ -58,13 +61,15 @@ public final class EngineEndToEndTest {
                         + Json.quote(jsonPath(hello)) + ","
                         + Json.quote(jsonPath(empty)) + ","
                         + Json.quote(jsonPath(chinese)) + ","
-                        + Json.quote(jsonPath(oneMb)) + "]"
+                        + Json.quote(jsonPath(oneMb)) + ","
+                        + Json.quote(jsonPath(mockDir)) + "]"
                         + ",\"sourceDir\":" + Json.quote(jsonPath(mockSource))
                         + ",\"targetDir\":" + Json.quote(jsonPath(pcRecv.resolve("sub"))) + "}"),
                 command("{\"id\":4,\"cmd\":\"mkdir\",\"parent\":" + Json.quote(jsonPath(mockRoot))
                         + ",\"child\":\"newdir\"}"),
                 command("{\"id\":5,\"cmd\":\"upload\",\"paths\":["
-                        + Json.quote(jsonPath(pcRecv.resolve("sub").resolve("hello.txt"))) + "]"
+                        + Json.quote(jsonPath(pcRecv.resolve("sub").resolve("hello.txt"))) + ","
+                        + Json.quote(jsonPath(pcRecv.resolve("sub").resolve("subdir"))) + "]"
                         + ",\"sourceDir\":" + Json.quote(jsonPath(pcRecv.resolve("sub")))
                         + ",\"targetDir\":" + Json.quote(jsonPath(mockRoot.resolve("upload"))) + "}"),
                 command("{\"id\":6,\"cmd\":\"delete\",\"path\":"
@@ -95,7 +100,9 @@ public final class EngineEndToEndTest {
             assertTrue(events.contains("\"event\":\"connected\""), "missing connected event");
             assertTrue(events.contains("\"event\":\"files\""), "missing files event");
             assertTrue(events.contains("hello.txt") && events.contains("中文.txt"), "missing entries");
+            assertTrue(events.contains("\"id\":3,\"success\":true"), "download result missing");
             assertTrue(events.contains("\"id\":4,\"success\":true"), "mkdir failed");
+            assertTrue(events.contains("\"id\":5,\"success\":true"), "upload result missing");
             assertTrue(events.contains("\"id\":6,\"success\":true"), "delete failed");
             assertTrue(events.contains("\"event\":\"complete\""), "missing complete event");
             assertTrue(!events.contains("\"event\":\"error\""), "unexpected error event");
@@ -111,12 +118,20 @@ public final class EngineEndToEndTest {
             assertTrue("你好，多轨快传".equals(new String(Files.readAllBytes(downloadedChinese), StandardCharsets.UTF_8)),
                     "中文.txt content mismatch");
             assertTrue(Files.size(downloadedOneMb) == mb.length, "1mb.bin size mismatch");
+            Path downloadedNested = pcRecv.resolve("sub").resolve("subdir").resolve("nested.txt");
+            assertTrue(Files.exists(downloadedNested), "nested file not downloaded");
+            assertTrue("nested".equals(new String(Files.readAllBytes(downloadedNested), StandardCharsets.UTF_8)),
+                    "nested.txt content mismatch");
             assertTrue(!Files.exists(mockRoot.resolve("newdir")), "newdir not deleted");
 
             Path uploadedHello = mockRoot.resolve("upload").resolve("hello.txt");
             assertTrue(Files.exists(uploadedHello), "uploaded hello.txt missing");
             assertTrue("hello".equals(new String(Files.readAllBytes(uploadedHello), StandardCharsets.UTF_8)),
                     "uploaded hello.txt content mismatch");
+            Path uploadedNested = mockRoot.resolve("upload").resolve("subdir").resolve("nested.txt");
+            assertTrue(Files.exists(uploadedNested), "uploaded nested.txt missing");
+            assertTrue("nested".equals(new String(Files.readAllBytes(uploadedNested), StandardCharsets.UTF_8)),
+                    "uploaded nested.txt content mismatch");
 
             System.out.println("P1 E2E PASS (UTF-8 event log: " + eventsLog + ")");
             mockServer.stop();

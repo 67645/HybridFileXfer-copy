@@ -70,10 +70,33 @@ public class DroidHFXClient extends HFXClient {
         return new DroidReadFileCall(iioService,buffers,files,localDir,remoteDir,operateThreadCount);
     }
 
-    public void freeBuffers(){
-        for (ByteBuffer buffer : buffers) {
-            NativeMemory.freeBuffer(buffer);
+    @Override
+    public void freeBuffers() {
+        if (!hasActiveTransfers()) {
+            freeBuffersNative();
+            return;
         }
-        buffers.clear();
+        Thread releaseThread = new Thread(() -> {
+            for (int i = 0; i < 100 && hasActiveTransfers(); i++) {
+                try {
+                    Thread.sleep(50);
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                    break;
+                }
+            }
+            freeBuffersNative();
+        }, "ClientBufferRelease");
+        releaseThread.setDaemon(true);
+        releaseThread.start();
+    }
+
+    private void freeBuffersNative() {
+        synchronized (buffers) {
+            for (ByteBuffer buffer : buffers) {
+                NativeMemory.freeBuffer(buffer);
+            }
+            buffers.clear();
+        }
     }
 }

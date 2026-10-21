@@ -135,6 +135,9 @@ public class Directory {
         for (String seg : segments) {
             if (seg.isEmpty()) continue;
             String sanitized = seg.replaceAll("[\\\\:*?\"<>|]", "_");
+            if (remote.fileSystem == FILE_SYSTEM_WINDOWS) {
+                sanitized = sanitizeWindowsSegment(sanitized);
+            }
             sanitizedSegments.add(sanitized);
         }
         // 用远程系统的分隔符拼接
@@ -146,6 +149,30 @@ public class Directory {
         } else {
             return remote.path + sanitizedRelative;
         }
+    }
+
+    /**
+     * Windows 额外兼容处理：结尾空格/点、保留设备名、. 与 ..。
+     * 这些名称在 Windows 上无法直接创建。
+     */
+    private static String sanitizeWindowsSegment(String segment) {
+        int end = segment.length();
+        while (end > 0) {
+            char c = segment.charAt(end - 1);
+            if (c == ' ' || c == '.') {
+                end--;
+            } else {
+                break;
+            }
+        }
+        String result = segment.substring(0, end);
+        if (result.isEmpty() || ".".equals(result) || "..".equals(result)) {
+            return "_";
+        }
+        if (result.matches("(?i)^(CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9])(\\..*)?$")) {
+            return "_" + result;
+        }
+        return result;
     }
 
     public static int getCurrentFileSystem(){
